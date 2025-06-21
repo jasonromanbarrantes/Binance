@@ -8,6 +8,9 @@ const SYMBOLS = [
   'RNDRUSDT', 'PEPEUSDT'
 ];
 
+const TELEGRAM_TOKEN = '7627714754:AAGfIzQ8ujOqvB1Iai8Erf8NkP3FGY_mPIM';
+const TELEGRAM_CHAT_ID = '5683374691';
+
 // === MAIN ICT SIGNAL ENGINE ===
 app.get('/signals.json', async (req, res) => {
   const signals = {};
@@ -35,7 +38,9 @@ app.get('/signals.json', async (req, res) => {
         const price = candles.at(-1).close;
         const atr = price * 0.008;
 
-        signals[symbol === '1000BONKUSDT' ? 'BONKUSDT' : symbol] = {
+        const cleanSymbol = symbol === '1000BONKUSDT' ? 'BONKUSDT' : symbol;
+
+        const signal = {
           price,
           grade,
           reason: [bos ? 'BOS' : null, unmitigatedFVG ? 'FVG' : null, unmitigatedOB ? 'OB' : null, isKillzone ? 'Killzone' : null].filter(Boolean).join(' + '),
@@ -45,6 +50,13 @@ app.get('/signals.json', async (req, res) => {
           tp2: price + atr * 3.0,
           session: getSessionName(now)
         };
+
+        signals[cleanSymbol] = signal;
+
+        // ✅ Telegram alert for A+ or A only
+        if (grade === 'A+' || grade === 'A') {
+          await sendTelegramAlert(cleanSymbol, signal);
+        }
       }
     } catch (e) {
       console.error(`❌ Error for ${symbol}:`, e.message);
@@ -55,6 +67,26 @@ app.get('/signals.json', async (req, res) => {
 });
 
 // === HELPERS ===
+
+async function sendTelegramAlert(symbol, signal) {
+  const message =
+    `📈 *${symbol}* | ${signal.grade} | ${signal.reason}\n` +
+    `Price: ${signal.price}\n` +
+    `Entry: ${signal.entry[0].toFixed(6)} – ${signal.entry[1].toFixed(6)}\n` +
+    `SL: ${signal.sl.toFixed(6)} | TP1: ${signal.tp1.toFixed(6)} | TP2: ${signal.tp2.toFixed(6)}\n` +
+    `Session: ${signal.session}`;
+
+  try {
+    await axios.post(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+      chat_id: TELEGRAM_CHAT_ID,
+      text: message,
+      parse_mode: 'Markdown'
+    });
+    console.log(`✅ Telegram alert sent for ${symbol}`);
+  } catch (e) {
+    console.error('Telegram send error:', e.message);
+  }
+}
 
 async function getCandles(symbol) {
   const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=100`;
@@ -134,11 +166,9 @@ function getSessionName(date) {
   return 'Outside session';
 }
 
-// === HOME ROUTE ===
 app.get('/', (_, res) => {
   res.send('✅ Binance ICT Signal API is running. Use /signals.json');
 });
 
-// === SERVER ===
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
