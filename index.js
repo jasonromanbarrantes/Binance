@@ -5,7 +5,7 @@ const app = express();
 const SYMBOLS = [
   '1000BONKUSDT', 'HBARUSDT', 'BTCUSDT',
   'OPUSDT', 'SOLUSDT', 'SEIUSDT',
-  'RNDRUSDT', 'PEPEUSDT'
+  'RNDRUSDT', '1000PEPEUSDT'
 ];
 
 const TELEGRAM_TOKEN = '7627714754:AAGfIzQ8ujOqvB1Iai8Erf8NkP3FGY_mPIM';
@@ -38,7 +38,10 @@ app.get('/signals.json', async (req, res) => {
         const price = candles.at(-1).close;
         const atr = price * 0.008;
 
-        const cleanSymbol = symbol === '1000BONKUSDT' ? 'BONKUSDT' : symbol;
+        const cleanSymbol =
+  symbol === '1000BONKUSDT' ? 'BONKUSDT' :
+  symbol === '1000PEPEUSDT' ? 'PEPEUSDT' :
+  symbol;
 
         const signal = {
           price,
