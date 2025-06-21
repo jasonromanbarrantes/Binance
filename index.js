@@ -2,9 +2,13 @@ const express = require('express');
 const axios = require('axios');
 const app = express();
 
-const SYMBOLS = ['1000BONKUSDT'];
+const SYMBOLS = [
+  '1000BONKUSDT', 'HBARUSDT', 'BTCUSDT',
+  'OPUSDT', 'SOLUSDT', 'SEIUSDT',
+  'RNDRUSDT', 'PEPEUSDT'
+];
 
-// === MAIN ROUTE: /signals.json ===
+// === MAIN ICT SIGNAL ENGINE ===
 app.get('/signals.json', async (req, res) => {
   const signals = {};
   const now = new Date();
@@ -12,7 +16,6 @@ app.get('/signals.json', async (req, res) => {
   for (const symbol of SYMBOLS) {
     try {
       const candles = await getCandles(symbol);
-
       const bos = detectBOS(candles, 'bullish', 30);
       const fvgs = detectFVG(candles, 50);
       const ob = detectOrderBlock(candles, 50);
@@ -32,7 +35,7 @@ app.get('/signals.json', async (req, res) => {
         const price = candles.at(-1).close;
         const atr = price * 0.008;
 
-        signals['BONKUSDT'] = {
+        signals[symbol === '1000BONKUSDT' ? 'BONKUSDT' : symbol] = {
           price,
           grade,
           reason: [bos ? 'BOS' : null, unmitigatedFVG ? 'FVG' : null, unmitigatedOB ? 'OB' : null, isKillzone ? 'Killzone' : null].filter(Boolean).join(' + '),
@@ -121,7 +124,7 @@ function scoreSignal({ bos, fvg, ob, killzone }) {
 
 function checkKillzone(date) {
   const utc = date.getUTCHours();
-  return (utc >= 7 && utc <= 10) || (utc >= 12 && utc <= 16); // London or NY Killzone
+  return (utc >= 7 && utc <= 10) || (utc >= 12 && utc <= 16);
 }
 
 function getSessionName(date) {
@@ -133,9 +136,9 @@ function getSessionName(date) {
 
 // === HOME ROUTE ===
 app.get('/', (_, res) => {
-  res.send('✅ Binance ICT Signal API is running. Go to /signals.json');
+  res.send('✅ Binance ICT Signal API is running. Use /signals.json');
 });
 
-// === SERVER START ===
+// === SERVER ===
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
