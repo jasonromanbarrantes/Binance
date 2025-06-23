@@ -11,7 +11,7 @@ const SYMBOLS = [
 const TELEGRAM_TOKEN = '7627714754:AAGfIzQ8ujOqvB1Iai8Erf8NkP3FGY_mPIM';
 const TELEGRAM_CHAT_ID = '5683374691';
 
-// === MAIN ICT SIGNAL ENGINE ===
+// === /signals.json (Strict Sniper with Telegram A+/A only) ===
 app.get('/signals.json', async (req, res) => {
   const signals = {};
   const now = new Date();
@@ -22,26 +22,15 @@ app.get('/signals.json', async (req, res) => {
       const bos = detectBOS(candles, 'bullish', 30);
       const fvgs = detectFVG(candles, 50);
       const ob = detectOrderBlock(candles, 50);
-
       const unmitigatedFVG = fvgs.find(fvg => !isMitigated(fvg, candles));
       const unmitigatedOB = ob && !isMitigated(ob, candles) ? ob : null;
-
       const isKillzone = checkKillzone(now);
-      const grade = scoreSignal({
-        bos,
-        fvg: !!unmitigatedFVG,
-        ob: !!unmitigatedOB,
-        killzone: isKillzone
-      });
+      const grade = scoreSignal({ bos, fvg: !!unmitigatedFVG, ob: !!unmitigatedOB, killzone: isKillzone });
 
       if (grade) {
         const price = candles.at(-1).close;
         const atr = price * 0.008;
-
-        const cleanSymbol =
-  symbol === '1000BONKUSDT' ? 'BONKUSDT' :
-  symbol === '1000PEPEUSDT' ? 'PEPEUSDT' :
-  symbol;
+        const cleanSymbol = symbol.replace(/^1000/, '');
 
         const signal = {
           price,
@@ -56,7 +45,6 @@ app.get('/signals.json', async (req, res) => {
 
         signals[cleanSymbol] = signal;
 
-        // ✅ Telegram alert for A+ or A only
         if (grade === 'A+' || grade === 'A') {
           await sendTelegramAlert(cleanSymbol, signal);
         }
@@ -69,8 +57,46 @@ app.get('/signals.json', async (req, res) => {
   res.json(signals);
 });
 
-// === HELPERS ===
+// === /signals-relaxed.json (Relaxed: B, B+, A, A+ — 5m + 15m) ===
+app.get('/signals-relaxed.json', async (req, res) => {
+  const timeframes = ['15m', '5m'];
+  const results = {};
 
+  for (const symbol of SYMBOLS) {
+    const resultPerSymbol = {};
+    for (const tf of timeframes) {
+      try {
+        const candles = await getCandles(symbol, tf);
+        const direction = detectTrendDirection(candles);
+        const bos = detectBOS(candles, direction, 30);
+        const fvgs = detectFVG(candles, 50);
+        const ob = detectOrderBlock(candles, direction, 50);
+        const unmitigatedFVG = fvgs.find(fvg => !isMitigated(fvg, candles));
+        const unmitigatedOB = ob && !isMitigated(ob, candles) ? ob : null;
+        const isKillzone = checkKillzone(new Date());
+        const grade = scoreRelaxedSignal({ bos, fvg: !!unmitigatedFVG, ob: !!unmitigatedOB, killzone: isKillzone });
+
+        if (grade) {
+          resultPerSymbol[tf] = {
+            grade,
+            reason: [bos ? 'BOS' : null, unmitigatedFVG ? 'FVG' : null, unmitigatedOB ? 'OB' : null, isKillzone ? 'Killzone' : null].filter(Boolean).join(' + ')
+          };
+        }
+      } catch (e) {
+        console.error(`❌ Error for ${symbol} ${tf}:`, e.message);
+      }
+    }
+
+    if (Object.keys(resultPerSymbol).length > 0) {
+      const clean = symbol.replace(/^1000/, '');
+      results[clean] = resultPerSymbol;
+    }
+  }
+
+  res.json(results);
+});
+
+// === HELPERS ===
 async function sendTelegramAlert(symbol, signal) {
   const message =
     `📈 *${symbol}* | ${signal.grade} | ${signal.reason}\n` +
@@ -91,8 +117,8 @@ async function sendTelegramAlert(symbol, signal) {
   }
 }
 
-async function getCandles(symbol) {
-  const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=15m&limit=100`;
+async function getCandles(symbol, tf = '15m') {
+  const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=100`;
   const response = await axios.get(url);
   return response.data.map(c => ({
     openTime: c[0],
@@ -103,6 +129,11 @@ async function getCandles(symbol) {
     volume: parseFloat(c[5]),
     closeTime: c[6]
   }));
+}
+
+function detectTrendDirection(candles) {
+  const closes = candles.slice(-10).map(c => c.close);
+  return (closes.at(-1) - closes[0]) >= 0 ? 'bullish' : 'bearish';
 }
 
 function detectBOS(candles, direction = 'bullish', lookback = 30) {
@@ -130,11 +161,13 @@ function detectFVG(candles, lookback = 50) {
   return fvgs;
 }
 
-function detectOrderBlock(candles, lookback = 50) {
+function detectOrderBlock(candles, direction = 'bullish', lookback = 50) {
   for (let i = lookback - 3; i >= 0; i--) {
     const c = candles[i], n1 = candles[i + 1], n2 = candles[i + 2];
-    const isBearishOB = c.close < c.open && n1.close > n1.open && n2.close > n2.open;
-    if (isBearishOB) {
+    const valid = direction === 'bullish'
+      ? c.close < c.open && n1.close > n1.open && n2.close > n2.open
+      : c.close > c.open && n1.close < n1.open && n2.close < n2.open;
+    if (valid) {
       return {
         open: c.open, close: c.close,
         high: c.high, low: c.low,
@@ -154,6 +187,14 @@ function scoreSignal({ bos, fvg, ob, killzone }) {
   if (bos && fvg && ob && killzone) return 'A+';
   if (bos && fvg && ob) return 'A';
   if (fvg && ob) return 'B+';
+  return null;
+}
+
+function scoreRelaxedSignal({ bos, fvg, ob, killzone }) {
+  if (bos && fvg && ob && killzone) return 'A+';
+  if (bos && fvg && ob) return 'A';
+  if (fvg && ob) return 'B+';
+  if (ob || fvg) return 'B';
   return null;
 }
 
