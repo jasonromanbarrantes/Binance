@@ -79,7 +79,8 @@ app.get('/signals-relaxed.json', async (req, res) => {
         if (grade) {
           resultPerSymbol[tf] = {
             grade,
-            reason: [bos ? 'BOS' : null, unmitigatedFVG ? 'FVG' : null, unmitigatedOB ? 'OB' : null, isKillzone ? 'Killzone' : null].filter(Boolean).join(' + ')
+            reason: [bos ? 'BOS' : null, unmitigatedFVG ? 'FVG' : null, unmitigatedOB ? 'OB' : null, isKillzone ? 'Killzone' : null].filter(Boolean).join(' + '),
+            session: getSessionName(new Date()) // ✅ added session here
           };
         }
       } catch (e) {
@@ -92,7 +93,8 @@ app.get('/signals-relaxed.json', async (req, res) => {
       results[clean] = resultPerSymbol;
     }
   }
-console.log("📊 RELAXED SIGNALS DETECTED:", JSON.stringify(results, null, 2));
+
+  console.log("📊 RELAXED SIGNALS DETECTED:", JSON.stringify(results, null, 2));
   res.json(results);
 });
 
@@ -195,7 +197,7 @@ function scoreRelaxedSignal({ bos, fvg, ob, killzone }) {
   if (bos && fvg && ob) return 'A';
   if (fvg && ob) return 'B+';
   if (ob || fvg) return 'B';
-  return 'Test'; // Surface even partial logic for visibility
+  return null; // ✅ Removed "Test"
 }
 
 function checkKillzone(date) {
