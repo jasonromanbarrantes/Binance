@@ -54,7 +54,6 @@ app.get('/signals.json', async (req, res) => {
     }
   }
 
-  console.log("📊 RELAXED SIGNALS DETECTED:", JSON.stringify(results, null, 2));
   res.json(signals);
 });
 
@@ -93,7 +92,7 @@ app.get('/signals-relaxed.json', async (req, res) => {
       results[clean] = resultPerSymbol;
     }
   }
-
+console.log("📊 RELAXED SIGNALS DETECTED:", JSON.stringify(results, null, 2));
   res.json(results);
 });
 
