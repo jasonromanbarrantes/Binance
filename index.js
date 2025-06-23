@@ -195,7 +195,7 @@ function scoreRelaxedSignal({ bos, fvg, ob, killzone }) {
   if (bos && fvg && ob) return 'A';
   if (fvg && ob) return 'B+';
   if (ob || fvg) return 'B';
-  return null;
+  return 'Test'; // Surface even partial logic for visibility
 }
 
 function checkKillzone(date) {
