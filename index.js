@@ -54,6 +54,7 @@ app.get('/signals.json', async (req, res) => {
     }
   }
 
+  console.log("📊 RELAXED SIGNALS DETECTED:", JSON.stringify(results, null, 2));
   res.json(signals);
 });
 
