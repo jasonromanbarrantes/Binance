@@ -1,4 +1,5 @@
-// Full upgraded index.js with 1H/30M/15M detection, CHOCH, OB+FVG confluence, and Long/Short detection
+// Full code for index.js with upgraded strategy support
+// Includes bullish/bearish, strict + relaxed, 1h/30m/15m, CHOCH, OB+FVG logic
 
 const express = require('express');
 const axios = require('axios');
@@ -14,7 +15,7 @@ const TELEGRAM_TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN';
 const TELEGRAM_CHAT_ID = 'YOUR_CHAT_ID';
 const TIMEFRAMES = ['15m', '30m', '1h'];
 
-// === /signals-relaxed.json ===
+// === /signals-relaxed.json (multi-timeframe relaxed) ===
 app.get('/signals-relaxed.json', async (req, res) => {
   const results = {};
 
@@ -67,7 +68,70 @@ app.get('/signals-relaxed.json', async (req, res) => {
   res.json(results);
 });
 
+// === /signals.json (strict mode A+/A only, uses 15m timeframe) ===
+app.get('/signals.json', async (req, res) => {
+  const signals = {};
+  const now = new Date();
+
+  for (const symbol of SYMBOLS) {
+    for (const direction of ['bullish', 'bearish']) {
+      try {
+        const candles = await getCandles(symbol, '15m');
+        const bos = detectBOS(candles, direction, 30);
+        const fvgs = detectFVG(candles, 50);
+        const ob = detectOrderBlock(candles, direction, 50);
+        const unmitigatedFVG = fvgs.find(fvg => !isMitigated(fvg, candles));
+        const unmitigatedOB = ob && !isMitigated(ob, candles) ? ob : null;
+        const isKillzone = checkKillzone(now);
+        const grade = scoreSignal({ bos, fvg: !!unmitigatedFVG, ob: !!unmitigatedOB, killzone: isKillzone });
+
+        if (grade === 'A+' || grade === 'A') {
+          const price = candles.at(-1).close;
+          const atr = price * 0.008;
+          const cleanSymbol = symbol.replace(/^1000/, '');
+
+          signals[`${cleanSymbol}_${direction === 'bullish' ? 'Long' : 'Short'}`] = {
+            price,
+            grade,
+            direction: direction === 'bullish' ? 'Long' : 'Short',
+            reason: [bos ? 'BOS' : null, unmitigatedFVG ? 'FVG' : null, unmitigatedOB ? 'OB' : null, isKillzone ? 'Killzone' : null].filter(Boolean).join(' + '),
+            entry: unmitigatedOB ? [unmitigatedOB.bottom, unmitigatedOB.top] : [price * 0.996, price],
+            sl: price - atr,
+            tp1: price + atr * 1.5,
+            tp2: price + atr * 3.0,
+            session: getSessionName(now)
+          };
+        }
+      } catch (e) {
+        console.error(`❌ Error for ${symbol} ${direction}:`, e.message);
+      }
+    }
+  }
+
+  res.json(signals);
+});
+
 // === HELPERS ===
+async function sendTelegramAlert(symbol, signal) {
+  const message =
+    `📈 *${symbol}* | ${signal.grade} | ${signal.reason}\n` +
+    `Price: ${signal.price}\n` +
+    `Entry: ${signal.entry[0].toFixed(6)} – ${signal.entry[1].toFixed(6)}\n` +
+    `SL: ${signal.sl.toFixed(6)} | TP1: ${signal.tp1.toFixed(6)} | TP2: ${signal.tp2.toFixed(6)}\n` +
+    `Session: ${signal.session}`;
+
+  try {
+    await axios.post(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+      chat_id: TELEGRAM_CHAT_ID,
+      text: message,
+      parse_mode: 'Markdown'
+    });
+    console.log(`✅ Telegram alert sent for ${symbol}`);
+  } catch (e) {
+    console.error('Telegram send error:', e.message);
+  }
+}
+
 async function getCandles(symbol, tf = '15m') {
   const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${tf}&limit=100`;
   const response = await axios.get(url);
@@ -121,9 +185,10 @@ function detectOrderBlock(candles, direction = 'bullish', lookback = 50) {
       : c.close > c.open && n1.close < n1.open && n2.close < n2.open;
     if (valid) {
       return {
+        open: c.open, close: c.close,
+        high: c.high, low: c.low,
         top: Math.max(c.open, c.close),
-        bottom: Math.min(c.open, c.close),
-        high: c.high, low: c.low
+        bottom: Math.min(c.open, c.close)
       };
     }
   }
@@ -143,6 +208,21 @@ function isMitigated(zone, candles) {
   return candles.some(c => c.low <= zone.top && c.high >= zone.bottom);
 }
 
+function scoreSignal({ bos, fvg, ob, killzone }) {
+  if (bos && fvg && ob && killzone) return 'A+';
+  if (bos && fvg && ob) return 'A';
+  if (fvg && ob) return 'B+';
+  return null;
+}
+
+function scoreRelaxedSignal({ bos, fvg, ob, killzone, choch, confluence }) {
+  if (choch && confluence && killzone) return 'A+';
+  if (bos && fvg && ob && killzone) return 'A';
+  if (bos && fvg && ob) return 'B+';
+  if (fvg && ob) return 'B';
+  return null;
+}
+
 function checkKillzone(date) {
   const utc = date.getUTCHours();
   return (utc >= 7 && utc <= 10) || (utc >= 12 && utc <= 16);
@@ -153,14 +233,6 @@ function getSessionName(date) {
   if (utc >= 7 && utc < 10) return 'London';
   if (utc >= 12 && utc < 16) return 'NY Killzone';
   return 'Outside session';
-}
-
-function scoreRelaxedSignal({ bos, fvg, ob, killzone, choch, confluence }) {
-  if (choch && confluence && killzone) return 'A+';
-  if (bos && fvg && ob && killzone) return 'A';
-  if (bos && fvg && ob) return 'B+';
-  if (fvg && ob) return 'B';
-  return null;
 }
 
 const PORT = process.env.PORT || 3000;
